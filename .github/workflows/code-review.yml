@@ -1,4 +1,4 @@
-name: code-review
+name: Code Review
 
 on:
   pull_request:
@@ -40,20 +40,30 @@ jobs:
             const result = await model.generateContent(prompt);
             const response = await result.response;
             const text = response.text();
-            console.log(text)
-            
-            fs.writeFileSync('res.txt',text);
-            console.log('Save Results!')
-      - name: output
-        id: store
+            fs.writeFileSync('res.txt', text);
+            console.log('Save Results!');
+
+      - name: Parse AI Output and Format Comments
+        id: parse_comments
         run: |
-          COMMENT=$(sed '/^```/d' res.txt | jq -c .)
-          echo "comment=$COMMENT" >> $GITHUB_OUTPUT
-          echo $((${{ steps.store.outputs.comment }}))
+          jq -n --argfile res res.txt '
+            def extract_diff_hunk:
+              gsub("@@ -\\([0-9,]+\\) \+\\([0-9,]+\\) @@", "\\"diff_hunk=\"@@ -\\(.[0-9,]+\\) \\+\\(.[0-9,]+\\) @@\"");
+            . as $res | split("\n") | map(select(. != "")) | .[:-1] | map(
+              {
+                path: .[0] | fromjson,
+                line: .[1] | tonumber,
+                side: .[2] | fromjson,
+                body: .[3] | fromjson,
+                diff_hunk: .[0] | select(contains("@@")) | extract_diff_hunk
+              }
+            )' res.txt > formatted_comments.json
+          echo "comment=$(cat formatted_comments.json)" >> $GITHUB_OUTPUT
+
       - name: Add Pull Request Review Comment
         uses: nbaztec/add-pr-review-comment@v1.0.7
         with:
-          comments: ${{ steps.store.outputs.comment }}
+          comments: ${{ steps.parse_comments.outputs.comment }}
           repo-token: ${{ secrets.GH_TOKEN }}
-          repo-token-user-login: 'github-actions[bot]' # The user.login for temporary GitHub tokens
-          allow-repeats: false # This is the default
+          repo-token-user-login: 'github-actions[bot]'  # The user.login for temporary GitHub tokens
+          allow-repeats: false  # This is the default
