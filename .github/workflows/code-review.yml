@@ -29,14 +29,14 @@ jobs:
         with:
           script: |
             const fs = require("fs");
-            const diff_output = fs.readFileSync("diff.txt",'utf8');
-            console.log('diff:',diff_output)
-            
+            const diff_output = fs.readFileSync("diff.txt", 'utf8');
+            console.log('diff:', diff_output);
+
             const { GoogleGenerativeAI } = require("@google/generative-ai");
             const genAI = new GoogleGenerativeAI("${{ secrets.GEMINI_API_KEY }}");
-            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash"});
-            
-            const prompt = `You are a senior software engineer and need to perform a code review based on the results of a given git diff. Review the changed code from different perspectives and let us know if there are any changes that need to be made. If you see any code that needs to be fixed in the result of the git diff, you need to calculate the exact line number by referring to the “@@ -0,0 +0,0 @@” part. The output format is \[{“path”:“{ filepath }”, “line”: { line }, “text”: { review comment }, “side”: “RIGHT"}\] format must be respected.\n<git diff>${diff_output}</git diff>`;
+            const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+            const prompt = `You are a senior software engineer and need to perform a code review based on the results of a given git diff. Review the changed code from different perspectives and let us know if there are any changes that need to be made. If you see any code that needs to be fixed in the result of the git diff, you need to calculate the exact line number by referring to the “@@ -0,0 +0,0 @@” part. The output format is [{“path”:“{ filepath }”, “line”: { line }, “text”: { review comment }, “side”: “RIGHT"}] format must be respected.\n<git diff>${diff_output}</git diff>`;
             const result = await model.generateContent(prompt);
             const response = await result.response;
             const text = response.text();
@@ -46,10 +46,19 @@ jobs:
       - name: Parse AI Output and Format Comments
         id: parse_comments
         run: |
-          jq -n --argfile res res.txt '
-            def extract_diff_hunk:
-              gsub("@@ -\\([0-9,]+\\) \+\\([0-9,]+\\) @@", "\\"diff_hunk=\"@@ -\\(.[0-9,]+\\) \\+\\(.[0-9,]+\\) @@\"");
-            . as $res | split("\n") | map(select(. != "")) | .[:-1] | map(
+          # Read the content of res.txt into a variable
+          res_content=$(<res.txt)
+          
+          # Use jq to parse the content
+          formatted_comments=$(echo "$res_content" | jq -r '
+            def extract_diff_hunk(input):
+              input | gsub("@@ -[0-9,]+ +[0-9,]+ @@", "\"diff_hunk=\"@@ -[0-9,]+ +[0-9,]+ @@\"")
+            ;
+            . as $res
+            | split("\n")
+            | map(select(. != ""))
+            | .[:-1]
+            | map(
               {
                 path: .[0] | fromjson,
                 line: .[1] | tonumber,
@@ -57,7 +66,13 @@ jobs:
                 body: .[3] | fromjson,
                 diff_hunk: .[0] | select(contains("@@")) | extract_diff_hunk
               }
-            )' res.txt > formatted_comments.json
+            )
+            | map(@base64)  # Convert to base64 to handle special characters
+            | join("\n")
+          ')
+          
+          # Save formatted comments to a file
+          echo "$formatted_comments" > formatted_comments.json
           echo "comment=$(cat formatted_comments.json)" >> $GITHUB_OUTPUT
 
       - name: Add Pull Request Review Comment
