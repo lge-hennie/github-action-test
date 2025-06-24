@@ -13,3 +13,7 @@ def list_substract(a: List, b: List) -> List:
     return [i-j for i, j in zip(a,b)]
 
 
+def is_num(a):
+    if isinstance(a, int):
+        return True
+    return False
